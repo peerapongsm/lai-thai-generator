@@ -77,6 +77,12 @@ h2,
 h3 {
   font-weight: 600;
   margin: 0 0 0.5em;
+  text-wrap: balance;
+}
+
+p,
+li {
+  text-wrap: pretty;
 }
 
 .app-header {
@@ -102,6 +108,7 @@ h3 {
   color: var(--text-faint);
   font-size: 0.82rem;
   letter-spacing: 0.02em;
+  text-wrap: pretty;
 }
 
 .app-main {
@@ -112,12 +119,12 @@ h3 {
   padding: 1.5rem;
 }
 
-@media (min-width: 900px) {
+@media (min-width: 1024px) {
   .app-main {
     flex-direction: row;
     align-items: flex-start;
     padding: 2rem;
-    gap: 2.5rem;
+    gap: 3rem;
   }
 }
 
@@ -172,6 +179,12 @@ h3 {
   max-height: 58vh;
 }
 
+@media (min-width: 1024px) {
+  .preview-frame svg {
+    max-height: 66vh;
+  }
+}
+
 .lai-shape {
   opacity: 1;
   transition: opacity 150ms ease;
@@ -189,23 +202,48 @@ h3 {
   }
 }
 
+/* Controls surface: a lifted lacquer panel distinct from the raw page
+   background. Mobile gets a bottom-sheet silhouette (rounded top corners,
+   sits under the framed pattern); desktop gets a uniform rounded rail. */
 .controls-column {
   display: flex;
   flex-direction: column;
   width: 100%;
+  background: linear-gradient(160deg, #17110a, #100b06);
+  border: 1px solid var(--panel-border);
+  border-radius: 1.1rem 1.1rem 0.5rem 0.5rem;
+  padding: 1.5rem 1.25rem 1.75rem;
+  box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.4);
 }
 
-@media (min-width: 900px) {
+@media (min-width: 1024px) {
   .controls-column {
-    width: 20rem;
+    width: 20.5rem;
     flex-shrink: 0;
-    border-left: 1px solid var(--hairline);
-    padding-left: 1.75rem;
+    border-radius: var(--radius);
+    padding: 1.5rem 1.25rem 1.75rem;
   }
 }
 
-/* Quiet side rail: sections recede — no boxed background, just a hairline
-   divider and small-caps labels, so the framed pattern stays dominant. */
+/* Comfortable thumb spacing on mobile: touch targets and gaps open up
+   below the desktop breakpoint, where the controls are tapped, not clicked. */
+@media (max-width: 1023.98px) {
+  .btn,
+  .mode-tab {
+    padding: 0.65rem 1rem;
+  }
+
+  .btn-row,
+  .segmented,
+  .mode-tabs,
+  .palette-grid {
+    gap: 0.6rem;
+  }
+}
+
+/* Sections within the controls panel recede — no boxed background of their
+   own, just a hairline divider and small-caps labels, so the panel reads as
+   one surface rather than stacked boxes. */
 .panel {
   padding: 1.1rem 0;
   border-top: 1px solid var(--hairline);
@@ -245,6 +283,7 @@ h3 {
   padding: 0.55rem 0.4rem;
   font-size: 0.8rem;
   letter-spacing: 0.03em;
+  text-wrap: pretty;
   transition:
     background 0.2s ease,
     border-color 0.2s ease,
@@ -277,6 +316,7 @@ h3 {
   padding: 0.55rem 0.9rem;
   text-decoration: none;
   display: inline-block;
+  text-wrap: pretty;
   transition:
     background 0.15s ease,
     border-color 0.15s ease,
@@ -382,6 +422,10 @@ h3 {
   color: var(--text-dim);
 }
 
+.field-label span:first-child {
+  text-wrap: pretty;
+}
+
 .field-label .value {
   color: var(--gold-soft);
   font-variant-numeric: tabular-nums;
@@ -447,19 +491,40 @@ input[type="range"] {
   gap: 0.5rem;
 }
 
+/* Lifted parchment panel: the article sits on its own raised surface
+   (mirrors the preview-frame treatment) instead of resting straight on the
+   page background. Individual .card sections recede inside it — hairline
+   dividers only — so the page reads as one surface, not stacked boxes. */
 .method-content {
-  padding: 1.25rem;
+  margin: 1.25rem;
+  padding: 1.5rem 1.5rem 1.75rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
   max-width: 46rem;
+  background: linear-gradient(160deg, #18120a, #100b06);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow:
+    0 1.25rem 2.5rem rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+@media (min-width: 1024px) {
+  .method-content {
+    margin: 2rem auto;
+    padding: 2rem 2.25rem 2.25rem;
+  }
 }
 
 .card {
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius);
-  padding: 1.1rem 1.25rem;
+  padding: 1.1rem 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.card:first-child {
+  border-top: none;
+  padding-top: 0;
 }
 
 .card ul,
