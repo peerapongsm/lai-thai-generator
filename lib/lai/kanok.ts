@@ -1,16 +1,18 @@
 // กนก (kanok) — a repeating flame/leaf band. Each repeat unit is 1-3
 // cascading "flame" shapes of decreasing size (echoing กนกสามตัว, where a
 // large flame is trailed by a smaller child and grandchild flame). Each
-// single flame is a closed outline with two distinct edges meeting at a
-// sharp tip:
-//   - the spine (left edge): a true ogee S-curve — concave near the base,
-//     inflecting to convex, then hooking back over itself to a curled tip
-//     (the "flame lick").
-//   - the belly (right edge): serrated with 2-4 secondary flame-lets
-//     (ตัวลูก) budding off it, each a smaller self-similar S-curved point,
-//     growing from a fine point near the tip to their fullest near the
-//     base — this is what makes a single flame read as กนกสามตัว rather
-//     than a solid sail.
+// single flame is a closed outline built from ONE canonical template,
+// specified in unit coordinates (x→right, y→up, base on y=0, height 1):
+//   - the spine (left edge, base→tip): three cubics, concave near the base,
+//     inflecting outward, then approaching the tip from the right — that
+//     final approach is what gives the tip its curled hook.
+//   - the belly (right edge, tip→base): the tip runs down through exactly
+//     three sharp flame-lets (ตัวลูก), each a peak between two soft
+//     valleys, before a straight base edge closes back to the spine's
+//     start.
+// `curl` only ever (a) shears the whole template in x by up to 0.18·y,
+// leaning it, and (b) scales the tip's own hook handle by up to ±15% — the
+// template's anchor points and handle structure never change shape.
 // Units are placed so each one starts and ends exactly on the baseline, at
 // (0,0) and (segmentWidth,0) in its own local space — translating by
 // segmentWidth therefore tiles the band with no gap or overlap along the
@@ -81,6 +83,10 @@ function addScaled(a: Point, dir: Point, s: number): Point {
   return { x: a.x + dir.x * s, y: a.y + dir.y * s };
 }
 
+function addOffset(p: Point, dx: number, dy: number): Point {
+  return { x: p.x + dx, y: p.y + dy };
+}
+
 function len(a: Point): number {
   return Math.hypot(a.x, a.y);
 }
@@ -88,11 +94,6 @@ function len(a: Point): number {
 function normalize(a: Point): Point {
   const l = len(a);
   return l < 1e-9 ? { x: 0, y: 0 } : { x: a.x / l, y: a.y / l };
-}
-
-/** Rotate a vector 90° counter-clockwise. */
-function perp(a: Point): Point {
-  return { x: -a.y, y: a.x };
 }
 
 /** Point on a cubic bezier at t in [0,1]. Pure — cubicPoint(...,0) === p0. */
@@ -142,225 +143,212 @@ function segmentToCommand(seg: CubicSegment): string {
   return `C ${pt(seg.c1)} ${pt(seg.c2)} ${pt(seg.to)}`;
 }
 
-// --- spine: true ogee S-curve + curled hook tip ---------------------------
+// --- canonical flame template, in unit coordinates -------------------------
+//
+// Spine anchors (base -> tip) and belly anchors (tip -> base) are fixed by
+// design; only the tip's own hook handle and a global x-shear move with
+// `curl` (see buildFlameGeometry). Never restructure these — see module
+// docs.
 
-export interface OgeeSpine {
-  tip: Point;
-  /** Widest lean point, and the spine's rightmost reach everywhere else —
-   *  callers use this to keep the belly clear of the spine (see
-   *  buildSerratedBelly). */
-  shoulder: Point;
-  segments: CubicSegment[];
-}
+const SPINE_A: Point = { x: 0.1, y: 0 };
+const SPINE_B: Point = { x: 0.06, y: 0.35 };
+const SPINE_C: Point = { x: 0.3, y: 0.72 };
+const TIP: Point = { x: 0.46, y: 0.995 };
 
-/**
- * The flame's back edge, from the base-left corner (0,0) up to the tip.
- * Four cubics: base -> waist is concave (hollows in toward the axis),
- * waist -> shoulder is convex (bulges out as it climbs, the widest lean —
- * kept low, around a third of the height, so there's a long graceful neck
- * left to curl through above it), shoulder -> hookApex continues that rise
- * up near the shoulder's own lean, and hookApex -> tip is the actual curl:
- * the tip lands well to the *left* of hookApex, with an arrival tangent
- * that points back down toward the spine — a real loop, not just a lean.
- * Every control point is kept at or left of the shoulder's x, so the spine
- * never reaches further right than the shoulder already does (the belly
- * relies on that — see buildSerratedBelly). `curl` sharpens the hook: the
- * shoulder/hookApex lean further out and the tip pulls back further to
- * meet them.
- */
-export function buildOgeeSpine(W: number, H: number, curl: number): OgeeSpine {
-  const waist: Point = { x: W * lerp(0.08, 0.16, curl), y: H * lerp(0.22, 0.17, curl) };
-  const shoulder: Point = {
-    x: W * lerp(0.3, 0.48, curl),
-    y: H * lerp(0.42, 0.33, curl),
-  };
-  const hookApex: Point = {
-    x: shoulder.x * lerp(0.8, 0.97, curl),
-    y: H * lerp(0.82, 0.93, curl),
-  };
-  const tip: Point = { x: W * lerp(0.14, 0.18, curl), y: H };
+const BELLY_V0: Point = { x: 0.5, y: 0.8 };
+const BELLY_P1: Point = { x: 0.62, y: 0.74 };
+const BELLY_V1: Point = { x: 0.52, y: 0.6 };
+const BELLY_P2: Point = { x: 0.66, y: 0.52 };
+const BELLY_V2: Point = { x: 0.52, y: 0.38 };
+const BELLY_P3: Point = { x: 0.68, y: 0.28 };
+const BELLY_V3: Point = { x: 0.5, y: 0.16 };
+const BASE_D: Point = { x: 0.55, y: 0 };
 
-  const seg1: CubicSegment = {
-    // base -> waist: concave hollow, curve leans toward the axis first.
-    c1: { x: waist.x * 0.18, y: waist.y * 0.5 },
-    c2: { x: waist.x * 0.5, y: waist.y * 1.08 },
-    to: waist,
-  };
-  const seg2: CubicSegment = {
-    // waist -> shoulder: convex bulge, leaning out as it rises.
-    c1: {
-      x: waist.x + (shoulder.x - waist.x) * 0.3,
-      y: waist.y + (shoulder.y - waist.y) * 0.1,
-    },
-    c2: {
-      x: shoulder.x - (shoulder.x - waist.x) * 0.15,
-      y: shoulder.y - (shoulder.y - waist.y) * 0.5,
-    },
-    to: shoulder,
-  };
-  const seg3: CubicSegment = {
-    // shoulder -> hookApex: keeps climbing close to the shoulder's lean.
-    c1: {
-      x: shoulder.x - (shoulder.x - hookApex.x) * 0.2,
-      y: shoulder.y + (hookApex.y - shoulder.y) * 0.4,
-    },
-    c2: { x: hookApex.x, y: hookApex.y - (hookApex.y - shoulder.y) * 0.15 },
-    to: hookApex,
-  };
-  const seg4: CubicSegment = {
-    // hookApex -> tip: the curl-back. c1 pokes a hair further out past
-    // hookApex (clamped to the shoulder's x so the no-crossing invariant
-    // holds) before c2 hooks hard back toward the tip, well left of
-    // hookApex — that reversal is what reads as a loop rather than a lean.
-    c1: {
-      x: Math.min(hookApex.x + (hookApex.x - tip.x) * 0.1, shoulder.x),
-      y: hookApex.y + (tip.y - hookApex.y) * 0.35,
-    },
-    c2: {
-      x: tip.x + (hookApex.x - tip.x) * 0.55,
-      y: tip.y - (tip.y - hookApex.y) * 0.1,
-    },
-    to: tip,
-  };
-
-  return { tip, shoulder, segments: [seg1, seg2, seg3, seg4] };
-}
-
-// --- belly: serrated edge with self-similar flame-lets ---------------------
+/** Handle length (unit space) for cubics arriving/leaving a sharp peak. */
+const SHARP_HANDLE = 0.04;
+/** Handle length (unit space) for cubics arriving/leaving a soft valley. */
+const SOFT_HANDLE = 0.1;
 
 /**
- * The flame's front edge, from the tip down to the base-right corner. Rides
- * a reference curve kept clear of the spine's `shoulder` (its widest reach)
- * by construction, so the two edges never cross — and buds `count` small
- * pointed flame-lets (ตัวลูก) off of it. Each flame-let is its own
- * miniature S-curved point: it leans out past the reference curve then
- * hooks back to a sharp cusp, echoing the spine's hook at a smaller scale.
- * Flame-lets grow from barely-there near the tip to fullest near the base
- * (the "thick base, needle-fine tip" taper), and the notch between
- * consecutive flame-lets is cut *inward* of the reference curve — that
- * gap is what reads as serration rather than one smooth bulge.
+ * The spine: base -> waist -> inflection -> tip, three cubics exactly as
+ * specified (concave rise, outward inflection, then approaching the tip
+ * from the right for the hook). `hookScale` scales only the tip's own
+ * handle — TIP+(0.10,-0.02) — by up to ±15%, per `curl`; every other handle
+ * is fixed.
  */
-export function buildSerratedBelly(
-  tip: Point,
-  br: Point,
-  shoulder: Point,
-  W: number,
-  H: number,
-  curl: number,
-  count: number,
-): CubicSegment[] {
-  const n = Math.round(clamp(count, 2, 4));
-
-  // Reference curve the serrations ride on. Kept clear of the spine's
-  // shoulder — its rightmost reach — with a margin, so however the
-  // flame-lets below displace it, the two edges of the flame can't cross.
-  const bellyX = Math.max(W * lerp(0.46, 0.62, curl), shoulder.x + W * 0.26);
-  const bellyY = H * lerp(0.3, 0.4, curl);
-  const ref0 = tip;
-  const ref1: Point = { x: tip.x + (bellyX - tip.x) * 0.45, y: tip.y - (tip.y - bellyY) * 0.6 };
-  const ref2: Point = { x: bellyX + (br.x - bellyX) * 0.15, y: bellyY * 0.32 };
-  const ref3 = br;
-
-  const ampBase = W * lerp(0.14, 0.24, curl);
-
-  function outwardNormal(t: number): Point {
-    const tangent = normalize(cubicTangent(ref0, ref1, ref2, ref3, t));
-    const n1 = perp(tangent);
-    // The belly bulges away from the spine, toward +x — pick whichever
-    // rotation agrees with that.
-    return n1.x >= 0 ? n1 : { x: -n1.x, y: -n1.y };
-  }
-
-  // Path points: tip, [peak, valley]*(n-1), peak_n, br.
-  const anchors: { point: Point; t: number; isPeak: boolean }[] = [
-    { point: tip, t: 0, isPeak: false },
+function buildUnitSpine(hookScale: number): CubicSegment[] {
+  return [
+    {
+      c1: addOffset(SPINE_A, -0.02, 0.15),
+      c2: addOffset(SPINE_B, 0.0, -0.12),
+      to: SPINE_B,
+    },
+    {
+      c1: addOffset(SPINE_B, 0.02, 0.18),
+      c2: addOffset(SPINE_C, -0.14, -0.1),
+      to: SPINE_C,
+    },
+    {
+      c1: addOffset(SPINE_C, 0.12, 0.1),
+      c2: addOffset(TIP, 0.1 * hookScale, -0.02 * hookScale),
+      to: TIP,
+    },
   ];
-  for (let i = 1; i <= n; i++) {
-    const tPeak = i / (n + 1);
-    const base = cubicPoint(ref0, ref1, ref2, ref3, tPeak);
-    const normal = outwardNormal(tPeak);
-    const tangent = normalize(cubicTangent(ref0, ref1, ref2, ref3, tPeak));
-    // Flame-lets fill out closer to the base (t -> 1) and taper to almost
-    // nothing near the tip (t -> 0).
-    const amp = ampBase * lerp(0.15, 1.15, tPeak);
-    const peak = addScaled(addScaled(base, normal, amp), tangent, amp * 0.3);
-    anchors.push({ point: peak, t: tPeak, isPeak: true });
+}
 
-    if (i < n) {
-      const tValley = (i + 0.5) / (n + 1);
-      const valleyBase = cubicPoint(ref0, ref1, ref2, ref3, tValley);
-      const valleyNormal = outwardNormal(tValley);
-      // Cut the notch in *past* the reference curve (toward the spine) so
-      // consecutive flame-lets read as separate points, not one lumpy edge.
-      const valleyAmp = ampBase * lerp(0.1, 0.4, tValley);
-      const valley = addScaled(valleyBase, valleyNormal, -valleyAmp);
-      anchors.push({ point: valley, t: tValley, isPeak: false });
-    }
-  }
-  anchors.push({ point: br, t: 1, isPeak: false });
+/**
+ * TIP -> V0 handle offsets (unit space, relative to TIP and V0
+ * respectively). The straight chord between these two anchors — and any
+ * gently-curving cubic close to it — runs close enough alongside the
+ * spine's own C -> TIP curve (which bulges out in x on its final approach
+ * to the tip; that bulge *is* the hook) to graze it. The only clean way
+ * through is to overtake the spine's bulge early, while y is still close
+ * to the tip's, so the rest of the segment (well right of the spine's
+ * shrinking bulge) has a clear run down to V0 — see tests/kanok.test.ts.
+ */
+const TIP_TO_V0_C1_OFFSET: Point = { x: 0.4, y: 0 };
+const TIP_TO_V0_C2_OFFSET: Point = { x: 0.05, y: 0.1 };
+
+/**
+ * The belly: tip -> 3 flame-lets (peak/valley/peak/valley/peak) -> base
+ * corner. Each anchor's own handle length is short (SHARP_HANDLE) at the
+ * tip, every peak, and the base corner — keeping those sharp — and longer
+ * (SOFT_HANDLE) through the valleys between them, so the curve sweeps
+ * smoothly there. Handle direction follows the local bisector tangent
+ * (of each anchor's two adjacent chords) so the curve threads every anchor
+ * in sequence without doubling back on itself.
+ */
+function buildUnitBelly(): CubicSegment[] {
+  const anchors: { p: Point; sharp: boolean }[] = [
+    { p: TIP, sharp: true },
+    { p: BELLY_V0, sharp: false },
+    { p: BELLY_P1, sharp: true },
+    { p: BELLY_V1, sharp: false },
+    { p: BELLY_P2, sharp: true },
+    { p: BELLY_V2, sharp: false },
+    { p: BELLY_P3, sharp: true },
+    { p: BELLY_V3, sharp: false },
+    { p: BASE_D, sharp: true },
+  ];
+
+  const tangents = anchors.map((a, i) => {
+    const prev = anchors[Math.max(0, i - 1)].p;
+    const next = anchors[Math.min(anchors.length - 1, i + 1)].p;
+    const inDir = normalize(sub(a.p, prev));
+    const outDir = normalize(sub(next, a.p));
+    return normalize({ x: inDir.x + outDir.x, y: inDir.y + outDir.y });
+  });
 
   const segments: CubicSegment[] = [];
   for (let i = 0; i < anchors.length - 1; i++) {
     const from = anchors[i];
     const to = anchors[i + 1];
-    const segVec = sub(to.point, from.point);
-    const segLen = len(segVec);
-    const dir = segLen < 1e-9 ? { x: 0, y: 1 } : { x: segVec.x / segLen, y: segVec.y / segLen };
-    const midNormal = outwardNormal((from.t + to.t) / 2);
-    // Short handles at a peak endpoint (and long ones at a valley) so each
-    // flame-let arrives at — and leaves — its own point sharply, like a
-    // cusp, while still curving smoothly through the valleys between them.
-    // The outward bulge is only applied on the valley side of each handle —
-    // right next to a peak it would dominate the (short) parallel component
-    // and round the point into a dome instead of a cusp.
-    const h1 = from.isPeak ? 0.14 : 0.38;
-    const h2 = to.isPeak ? 0.14 : 0.38;
-    const bulge = segLen * 0.12;
-    const bulge1 = from.isPeak ? 0 : bulge;
-    const bulge2 = to.isPeak ? 0 : bulge;
-    const c1 = addScaled(addScaled(from.point, dir, segLen * h1), midNormal, bulge1);
-    const c2 = addScaled(addScaled(to.point, dir, -segLen * h2), midNormal, bulge2);
-    segments.push({ c1, c2, to: to.point });
-  }
+    const segLen = len(sub(to.p, from.p));
 
+    if (i === 0) {
+      // TIP -> V0 is special-cased — see TIP_TO_V0_C1_OFFSET doc above.
+      segments.push({
+        c1: addOffset(from.p, TIP_TO_V0_C1_OFFSET.x, TIP_TO_V0_C1_OFFSET.y),
+        c2: addOffset(to.p, TIP_TO_V0_C2_OFFSET.x, TIP_TO_V0_C2_OFFSET.y),
+        to: to.p,
+      });
+      continue;
+    }
+
+    // The ≤0.04 / ≤0.10 lengths are upper bounds — also cap each handle to
+    // a fraction of its own (often much shorter) segment chord, so a handle
+    // whose neighbour-averaged tangent points away from the chord can't
+    // overshoot into a loop that crosses a neighbouring segment.
+    const magFrom = Math.min(from.sharp ? SHARP_HANDLE : SOFT_HANDLE, segLen * 0.35);
+    const magTo = Math.min(to.sharp ? SHARP_HANDLE : SOFT_HANDLE, segLen * 0.35);
+    segments.push({
+      c1: addScaled(from.p, tangents[i], magFrom),
+      c2: addScaled(to.p, tangents[i + 1], -magTo),
+      to: to.p,
+    });
+  }
   return segments;
 }
 
-const BASE_UNIT_WIDTH = 60;
-const BASE_UNIT_HEIGHT = 100;
+export interface FlameGeometry {
+  start: Point;
+  segments: CubicSegment[];
+}
+
+/**
+ * Maps the canonical unit-space template (see buildUnitSpine/buildUnitBelly)
+ * onto a flame of width W, height H: `curl` shears every point in x by up to
+ * 0.18·y (the lean) and scales the tip's hook handle by up to ±15%, then the
+ * whole thing is scaled by (W, H). A single closed path (spine, then belly,
+ * then an implicit straight base edge back to the start) with no
+ * self-intersection for any curl in [0,1] — see tests/kanok.test.ts.
+ */
+export function buildFlameGeometry(
+  W: number,
+  H: number,
+  curl: number,
+): FlameGeometry {
+  const shearAmt = 0.18 * curl;
+  const hookScale = lerp(0.85, 1.15, curl);
+
+  const transform = (p: Point): Point => ({
+    x: (p.x + shearAmt * p.y) * W,
+    y: p.y * H,
+  });
+
+  const unitSegments = [...buildUnitSpine(hookScale), ...buildUnitBelly()];
+  const segments = unitSegments.map((s) => ({
+    c1: transform(s.c1),
+    c2: transform(s.c2),
+    to: transform(s.to),
+  }));
+
+  return { start: transform(SPINE_A), segments };
+}
+
+/**
+ * Samples the flame's closed outline (spine, belly, and the straight base
+ * edge back to the start) as a polygon, `samplesPerCurve` points per cubic —
+ * used by the self-intersection test.
+ */
+export function sampleFlameOutline(
+  W: number,
+  H: number,
+  curl: number,
+  samplesPerCurve = 200,
+): Point[] {
+  const { start, segments } = buildFlameGeometry(W, H, curl);
+  const poly: Point[] = [start];
+  let prev = start;
+  for (const seg of segments) {
+    for (let i = 1; i <= samplesPerCurve; i++) {
+      poly.push(cubicPoint(prev, seg.c1, seg.c2, seg.to, i / samplesPerCurve));
+    }
+    prev = seg.to;
+  }
+  poly.push(start); // straight base edge closing the path (SVG "Z")
+  return poly;
+}
 
 /**
  * Build one flame's closed outline, base at local (0,0)-(W,0), rising to
- * height H. Two edges meet at a sharp tip: the spine (see buildOgeeSpine)
- * on the left, a true ogee S-curve hooking back on itself, and the belly
- * (see buildSerratedBelly) on the right, a serrated run of `flameletCount`
- * small self-similar flame points. `curl` sharpens the spine's hook and
- * pulls the belly's bulge wider, reading as a more pronounced curling lick
- * at higher values.
+ * height H — see buildFlameGeometry for how W/H/curl map onto the canonical
+ * template.
  */
 export function buildFlame(
   W: number,
   H: number,
   curl: number,
-  flameletCount = 3,
 ): { path: string; points: Point[] } {
-  const bl: Point = { x: 0, y: 0 };
-  const br: Point = { x: W, y: 0 };
+  const { start, segments } = buildFlameGeometry(W, H, curl);
 
-  const { tip, shoulder, segments: spineSegments } = buildOgeeSpine(W, H, curl);
-  const bellySegments = buildSerratedBelly(tip, br, shoulder, W, H, curl, flameletCount);
-
-  const path = [
-    `M ${pt(bl)}`,
-    ...spineSegments.map(segmentToCommand),
-    ...bellySegments.map(segmentToCommand),
-    "Z",
-  ].join(" ");
+  const path = [`M ${pt(start)}`, ...segments.map(segmentToCommand), "Z"].join(
+    " ",
+  );
 
   const points: Point[] = [
-    bl,
-    ...spineSegments.flatMap((s) => [s.c1, s.c2, s.to]),
-    ...bellySegments.flatMap((s) => [s.c1, s.c2, s.to]),
+    start,
+    ...segments.flatMap((s) => [s.c1, s.c2, s.to]),
   ];
 
   return { path, points };
@@ -389,15 +377,19 @@ export interface KanokUnitResult {
 }
 
 /**
- * Relative size + x-offset for each cascading flame within a repeat unit,
- * and how many belly flame-lets (ตัวลูก) it gets — the main flame carries
- * the most, tapering down for its smaller trailing children.
+ * Relative size + x-offset for each cascading flame within a repeat unit —
+ * the main flame carries the full-size template, tapering down for its
+ * smaller trailing children, stepping right along the base so consecutive
+ * silhouettes overlap by roughly 15%.
  */
 const CASCADE = [
-  { scale: 1, dx: 0, flamelets: 4 },
-  { scale: 0.62, dx: 0.5, flamelets: 3 },
-  { scale: 0.38, dx: 0.85, flamelets: 2 },
+  { scale: 1, dx: 0 },
+  { scale: 0.62, dx: 0.52 },
+  { scale: 0.4, dx: 0.88 },
 ];
+
+const BASE_UNIT_WIDTH = 60;
+const BASE_UNIT_HEIGHT = 100;
 
 /**
  * Build one repeat unit: 1-3 cascading flames sharing a baseline that runs
@@ -414,11 +406,11 @@ export function generateKanokUnit(
   const flamePaths: string[] = [];
   let maxX = W;
   for (let i = 0; i < count; i++) {
-    const { scale, dx, flamelets } = CASCADE[i];
+    const { scale, dx } = CASCADE[i];
     const fw = W * scale;
     const fh = H * scale;
     const offsetX = W * dx;
-    const { path, points } = buildFlame(fw, fh, p.curl, flamelets);
+    const { path, points } = buildFlame(fw, fh, p.curl);
     flamePaths.push(translate(path, offsetX, 0));
     const reach = Math.max(...points.map((pnt) => pnt.x));
     maxX = Math.max(maxX, offsetX + reach);

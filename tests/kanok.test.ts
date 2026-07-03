@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildOgeeSpine,
-  buildSerratedBelly,
+  buildFlame,
+  buildFlameGeometry,
   clampKanokParams,
   cubicPoint,
   cubicTangent,
   generateKanokBand,
   generateKanokUnit,
+  sampleFlameOutline,
+  type Point,
 } from "../lib/lai/kanok";
 
 describe("generateKanokUnit baseline continuity", () => {
@@ -168,59 +170,135 @@ describe("cubicTangent", () => {
   });
 });
 
-describe("buildOgeeSpine", () => {
-  it("reaches the tip at exactly height H, via a chain ending at the tip", () => {
-    const { tip, segments } = buildOgeeSpine(60, 110, 0.5);
-    expect(tip.y).toBe(110);
-    expect(segments[segments.length - 1].to).toEqual(tip);
+describe("buildFlameGeometry", () => {
+  it("starts at the spine's base anchor A and ends the spine at the tip, scaled by W/H", () => {
+    const W = 60;
+    const H = 110;
+    const { start, segments } = buildFlameGeometry(W, H, 0);
+    expect(start.x).toBeCloseTo(0.1 * W, 6);
+    expect(start.y).toBeCloseTo(0, 6);
+    // segments[0..2] are the spine (3 cubics); segments[2].to is the tip.
+    expect(segments[2].to.x).toBeCloseTo(0.46 * W, 6);
+    expect(segments[2].to.y).toBeCloseTo(0.995 * H, 6);
   });
 
-  it("never reaches further right (in x) than the shoulder, for every control point and endpoint", () => {
-    for (const curl of [0, 0.3, 0.6, 1]) {
-      const { shoulder, segments } = buildOgeeSpine(60, 110, curl);
-      for (const seg of segments) {
-        expect(seg.c1.x).toBeLessThanOrEqual(shoulder.x + 1e-9);
-        expect(seg.c2.x).toBeLessThanOrEqual(shoulder.x + 1e-9);
-        expect(seg.to.x).toBeLessThanOrEqual(shoulder.x + 1e-9);
-      }
-    }
+  it("belly runs through exactly 3 flame-lets (8 cubics) after the 3-cubic spine", () => {
+    const { segments } = buildFlameGeometry(60, 110, 0.5);
+    // 3 spine cubics + 8 belly cubics (tip->v0->p1->v1->p2->v2->p3->v3->base).
+    expect(segments.length).toBe(11);
   });
 
-  it("leans the shoulder further out as curl increases, deepening the hook", () => {
-    const low = buildOgeeSpine(60, 110, 0);
-    const high = buildOgeeSpine(60, 110, 1);
-    expect(high.shoulder.x).toBeGreaterThan(low.shoulder.x);
-    // The hook's "depth" — how far the tip pulls back relative to the
-    // shoulder's lean — grows with curl even though the tip itself also
-    // drifts slightly with curl.
-    expect(high.shoulder.x - high.tip.x).toBeGreaterThan(low.shoulder.x - low.tip.x);
+  it("belly's last segment ends at the base corner D, and the path closes back to A", () => {
+    const W = 60;
+    const H = 110;
+    const { start, segments } = buildFlameGeometry(W, H, 0.5);
+    const last = segments[segments.length - 1];
+    expect(last.to.x).toBeCloseTo(0.55 * W, 6);
+    expect(last.to.y).toBeCloseTo(0, 6);
+    // The straight base edge (SVG "Z") closes last.to back to start.
+    expect(start.y).toBeCloseTo(0, 6);
+  });
+
+  it("curl shears the flame rightward (higher points shift right more) without moving the base", () => {
+    const W = 60;
+    const H = 110;
+    const straight = buildFlameGeometry(W, H, 0);
+    const curled = buildFlameGeometry(W, H, 1);
+    // Base anchor (y=0) is unaffected by shear.
+    expect(curled.start.x).toBeCloseTo(straight.start.x, 6);
+    // The tip (high y) shifts right under curl.
+    const tipStraight = straight.segments[2].to;
+    const tipCurled = curled.segments[2].to;
+    expect(tipCurled.x).toBeGreaterThan(tipStraight.x);
+  });
+
+  it("scales only the tip's own hook handle (segments[2].c2) by at most ±15% across curl range", () => {
+    const W = 60;
+    const H = 110;
+    const low = buildFlameGeometry(W, H, 0);
+    const high = buildFlameGeometry(W, H, 1);
+    // Unsheared (dy-only) component of the hook handle offset from the tip.
+    const lowOffsetY = low.segments[2].to.y - low.segments[2].c2.y;
+    const highOffsetY = high.segments[2].to.y - high.segments[2].c2.y;
+    const ratio = highOffsetY / lowOffsetY;
+    expect(ratio).toBeGreaterThan(1);
+    expect(ratio).toBeLessThanOrEqual(1.15 / 0.85 + 1e-9);
   });
 });
 
-describe("buildSerratedBelly", () => {
-  it("produces exactly 2*count segments (a peak and a fall for each flame-let)", () => {
-    const tip = { x: 15, y: 110 };
-    const br = { x: 60, y: 0 };
-    const shoulder = { x: 25, y: 40 };
-    for (const count of [2, 3, 4]) {
-      const segments = buildSerratedBelly(tip, br, shoulder, 60, 110, 0.5, count);
-      expect(segments.length).toBe(2 * count);
+describe("buildFlame", () => {
+  it("produces a well-formed single closed path with no NaNs", () => {
+    const { path } = buildFlame(60, 110, 0.5);
+    expect(path.startsWith("M")).toBe(true);
+    expect(path.endsWith("Z")).toBe(true);
+    expect(path).not.toMatch(/NaN/);
+    // Exactly one M and one Z: a single closed subpath.
+    expect((path.match(/M/g) ?? []).length).toBe(1);
+    expect((path.match(/Z/g) ?? []).length).toBe(1);
+  });
+});
+
+// --- self-intersection ------------------------------------------------------
+//
+// The canonical flame must render as a single simple (non-self-intersecting)
+// polygon for every curl in its valid range — no floating tip slivers, no
+// dark self-intersection notches. Sample each cubic densely and check every
+// pair of non-adjacent edges for a proper crossing.
+
+function segmentsIntersect(a1: Point, a2: Point, b1: Point, b2: Point): boolean {
+  const d1x = a2.x - a1.x;
+  const d1y = a2.y - a1.y;
+  const d2x = b2.x - b1.x;
+  const d2y = b2.y - b1.y;
+  const denom = d1x * d2y - d1y * d2x;
+  const EPS = 1e-9;
+  if (Math.abs(denom) < EPS) return false; // parallel/collinear: not a proper crossing
+  const dx = b1.x - a1.x;
+  const dy = b1.y - a1.y;
+  const t = (dx * d2y - dy * d2x) / denom;
+  const u = (dx * d1y - dy * d1x) / denom;
+  // Require a proper interior crossing, not a touch at/near an endpoint —
+  // shared endpoints between adjacent edges are expected and excluded by
+  // the caller, this margin guards against near-endpoint float noise too.
+  const M = 1e-6;
+  return t > M && t < 1 - M && u > M && u < 1 - M;
+}
+
+function assertSimplePolygon(poly: Point[]): void {
+  const n = poly.length - 1; // poly is closed: poly[n] === poly[0]
+  for (let i = 0; i < n; i++) {
+    const a1 = poly[i];
+    const a2 = poly[i + 1];
+    for (let j = i + 1; j < n; j++) {
+      // Skip the edge itself and both its immediate neighbours (they share
+      // an endpoint with edge i by construction, which is not a crossing).
+      if (j === i || j === i - 1 || j === i + 1) continue;
+      if (j === n - 1 && i === 0) continue; // wraparound-adjacent pair
+      const b1 = poly[j];
+      const b2 = poly[j + 1];
+      if (segmentsIntersect(a1, a2, b1, b2)) {
+        throw new Error(
+          `self-intersection: edge ${i} (${a1.x},${a1.y})-(${a2.x},${a2.y}) crosses edge ${j} (${b1.x},${b1.y})-(${b2.x},${b2.y})`,
+        );
+      }
     }
-  });
+  }
+}
 
-  it("ends exactly at the base-right corner", () => {
-    const tip = { x: 15, y: 110 };
-    const br = { x: 60, y: 0 };
-    const shoulder = { x: 25, y: 40 };
-    const segments = buildSerratedBelly(tip, br, shoulder, 60, 110, 0.7, 3);
-    expect(segments[segments.length - 1].to).toEqual(br);
-  });
+describe("kanok flame has no self-intersection", () => {
+  it.each([0, 0.25, 0.5, 0.75, 1])(
+    "full-size flame silhouette is a simple polygon at curl=%s",
+    (curl) => {
+      const poly = sampleFlameOutline(60, 110, curl, 200);
+      expect(() => assertSimplePolygon(poly)).not.toThrow();
+    },
+  );
 
-  it("clamps out-of-range counts into [2,4]", () => {
-    const tip = { x: 15, y: 110 };
-    const br = { x: 60, y: 0 };
-    const shoulder = { x: 25, y: 40 };
-    expect(buildSerratedBelly(tip, br, shoulder, 60, 110, 0.5, 0).length).toBe(4);
-    expect(buildSerratedBelly(tip, br, shoulder, 60, 110, 0.5, 10).length).toBe(8);
-  });
+  it.each([0, 0.5, 1])(
+    "smallest cascade-scale flame (0.4x) is still a simple polygon at curl=%s",
+    (curl) => {
+      const poly = sampleFlameOutline(60 * 0.4, 110 * 0.4, curl, 200);
+      expect(() => assertSimplePolygon(poly)).not.toThrow();
+    },
+  );
 });
