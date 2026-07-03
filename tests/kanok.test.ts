@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildOgeeSpine,
+  buildSerratedBelly,
   clampKanokParams,
+  cubicPoint,
+  cubicTangent,
   generateKanokBand,
   generateKanokUnit,
 } from "../lib/lai/kanok";
@@ -130,5 +134,93 @@ describe("generateKanokUnit output", () => {
     for (let i = 1; i < upNums.length; i += 2) {
       expect(downNums[i]).toBeCloseTo(-upNums[i], 5);
     }
+  });
+});
+
+describe("cubicPoint", () => {
+  const p0 = { x: 0, y: 0 };
+  const p1 = { x: 1, y: 5 };
+  const p2 = { x: 4, y: 5 };
+  const p3 = { x: 5, y: 0 };
+
+  it("returns p0 at t=0 and p3 at t=1", () => {
+    expect(cubicPoint(p0, p1, p2, p3, 0)).toEqual(p0);
+    expect(cubicPoint(p0, p1, p2, p3, 1)).toEqual(p3);
+  });
+
+  it("stays within the convex hull of its control points at t=0.5", () => {
+    const mid = cubicPoint(p0, p1, p2, p3, 0.5);
+    expect(mid.x).toBeGreaterThanOrEqual(p0.x);
+    expect(mid.x).toBeLessThanOrEqual(p3.x);
+    expect(mid.y).toBeGreaterThan(0);
+  });
+});
+
+describe("cubicTangent", () => {
+  it("points toward p1 at t=0 (direction proportional to p1 - p0)", () => {
+    const p0 = { x: 0, y: 0 };
+    const p1 = { x: 2, y: 0 };
+    const p2 = { x: 4, y: 0 };
+    const p3 = { x: 6, y: 0 };
+    const tangent = cubicTangent(p0, p1, p2, p3, 0);
+    expect(tangent.x).toBeGreaterThan(0);
+    expect(tangent.y).toBeCloseTo(0, 6);
+  });
+});
+
+describe("buildOgeeSpine", () => {
+  it("reaches the tip at exactly height H, via a chain ending at the tip", () => {
+    const { tip, segments } = buildOgeeSpine(60, 110, 0.5);
+    expect(tip.y).toBe(110);
+    expect(segments[segments.length - 1].to).toEqual(tip);
+  });
+
+  it("never reaches further right (in x) than the shoulder, for every control point and endpoint", () => {
+    for (const curl of [0, 0.3, 0.6, 1]) {
+      const { shoulder, segments } = buildOgeeSpine(60, 110, curl);
+      for (const seg of segments) {
+        expect(seg.c1.x).toBeLessThanOrEqual(shoulder.x + 1e-9);
+        expect(seg.c2.x).toBeLessThanOrEqual(shoulder.x + 1e-9);
+        expect(seg.to.x).toBeLessThanOrEqual(shoulder.x + 1e-9);
+      }
+    }
+  });
+
+  it("leans the shoulder further out as curl increases, deepening the hook", () => {
+    const low = buildOgeeSpine(60, 110, 0);
+    const high = buildOgeeSpine(60, 110, 1);
+    expect(high.shoulder.x).toBeGreaterThan(low.shoulder.x);
+    // The hook's "depth" — how far the tip pulls back relative to the
+    // shoulder's lean — grows with curl even though the tip itself also
+    // drifts slightly with curl.
+    expect(high.shoulder.x - high.tip.x).toBeGreaterThan(low.shoulder.x - low.tip.x);
+  });
+});
+
+describe("buildSerratedBelly", () => {
+  it("produces exactly 2*count segments (a peak and a fall for each flame-let)", () => {
+    const tip = { x: 15, y: 110 };
+    const br = { x: 60, y: 0 };
+    const shoulder = { x: 25, y: 40 };
+    for (const count of [2, 3, 4]) {
+      const segments = buildSerratedBelly(tip, br, shoulder, 60, 110, 0.5, count);
+      expect(segments.length).toBe(2 * count);
+    }
+  });
+
+  it("ends exactly at the base-right corner", () => {
+    const tip = { x: 15, y: 110 };
+    const br = { x: 60, y: 0 };
+    const shoulder = { x: 25, y: 40 };
+    const segments = buildSerratedBelly(tip, br, shoulder, 60, 110, 0.7, 3);
+    expect(segments[segments.length - 1].to).toEqual(br);
+  });
+
+  it("clamps out-of-range counts into [2,4]", () => {
+    const tip = { x: 15, y: 110 };
+    const br = { x: 60, y: 0 };
+    const shoulder = { x: 25, y: 40 };
+    expect(buildSerratedBelly(tip, br, shoulder, 60, 110, 0.5, 0).length).toBe(4);
+    expect(buildSerratedBelly(tip, br, shoulder, 60, 110, 0.5, 10).length).toBe(8);
   });
 });
