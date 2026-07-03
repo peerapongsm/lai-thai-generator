@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import type { Palette } from "@/lib/lai/palette";
 
 export interface PreviewProps {
@@ -8,6 +11,26 @@ export interface PreviewProps {
 }
 
 export default function Preview({ path, viewBox, palette, svgRef }: PreviewProps) {
+  // Crossfade the pattern on param change: hide it instantly (no
+  // transition), then release the class on the next frame so the
+  // opacity change back to 1 animates over 150ms.
+  const [fading, setFading] = useState(false);
+  const prevPath = useRef(path);
+
+  useEffect(() => {
+    if (prevPath.current === path) return;
+    prevPath.current = path;
+    setFading(true);
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setFading(false));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [path]);
+
   return (
     <svg
       ref={svgRef}
@@ -23,7 +46,12 @@ export default function Preview({ path, viewBox, palette, svgRef }: PreviewProps
         height={viewBox.split(" ")[3]}
         fill={palette.fill}
       />
-      <path d={path} fill={palette.line} fillRule="evenodd" />
+      <path
+        className={`lai-shape${fading ? " is-fading" : ""}`}
+        d={path}
+        fill={palette.line}
+        fillRule="evenodd"
+      />
     </svg>
   );
 }

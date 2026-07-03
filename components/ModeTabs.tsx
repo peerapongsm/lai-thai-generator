@@ -17,7 +17,7 @@ export default function ModeTabs({
           type="button"
           role="tab"
           aria-selected={mode === m}
-          className={`btn ${mode === m ? "btn-active" : ""}`}
+          className="mode-tab"
           onClick={() => onChange(m)}
         >
           {MODE_LABELS[m]}

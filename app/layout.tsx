@@ -1,5 +1,13 @@
 import type { Metadata } from "next";
+import { Srisakdi } from "next/font/google";
 import "./globals.css";
+
+const displayFont = Srisakdi({
+  subsets: ["thai", "latin"],
+  weight: ["400", "700"],
+  variable: "--font-display",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "ลายไทย Generator",
@@ -9,7 +17,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="th">
+    <html lang="th" className={displayFont.variable}>
       <head>
         <script
           defer
